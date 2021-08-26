@@ -4,6 +4,7 @@ use nom::{
     branch::alt,
     bytes::complete::take_while1,
     character::complete::{alphanumeric1, char, space0, space1},
+    combinator::opt,
     multi::separated_list0,
     sequence::delimited,
     IResult,
@@ -26,7 +27,7 @@ pub(crate) fn parse(input: &str) -> IResult<&str, Vec<Command>> {
     // let sep = char(';');
     // let escape = char('\\');
 
-    let (i, command) = parse_background_command(input)?;
+    let (i, command) = parse_command(input)?;
 
     Ok((i, vec![command]))
 }
@@ -35,7 +36,7 @@ fn is_allowed_in_double_quotes(chr: char) -> bool {
     chr.is_alphanumeric() || chr.is_whitespace()
 }
 
-fn parse_background_command(input: &str) -> IResult<&str, Command> {
+fn parse_command(input: &str) -> IResult<&str, Command> {
     let unquoted_param = alphanumeric1;
     let single_quote = char('\'');
     let double_quote = char('"');
@@ -50,14 +51,14 @@ fn parse_background_command(input: &str) -> IResult<&str, Command> {
     let (i, _) = space0(i)?;
     let (i, parameters) = separated_list0(space1, alt((quoted_param, unquoted_param)))(i)?;
     let (i, _) = space0(i)?;
-    let (i, _) = char('&')(i)?;
+    let (i, background) = opt(char('&'))(i)?;
 
     Ok((
         i,
         Command {
             name: command_name,
             pipe: false,
-            background: true,
+            background: background.is_some(),
             parameters: parameters,
         },
     ))
@@ -66,7 +67,7 @@ fn parse_background_command(input: &str) -> IResult<&str, Command> {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn test_parse_command() {
+    fn test_parse_commands() {
         let result = super::parse("foo bar &");
         assert!(result.is_ok());
 
@@ -85,9 +86,9 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_background_command() {
+    fn test_parse_command() {
         assert_eq!(
-            super::parse_background_command("abc &"),
+            super::parse_command("abc &"),
             Ok((
                 "",
                 super::Command {
@@ -100,7 +101,7 @@ mod tests {
         );
 
         assert_eq!(
-            super::parse_background_command("abc&"),
+            super::parse_command("abc&"),
             Ok((
                 "",
                 super::Command {
@@ -112,10 +113,21 @@ mod tests {
             ))
         );
 
-        assert!(super::parse_background_command("abc").is_err());
+        assert_eq!(
+            super::parse_command("abc"),
+            Ok((
+                "",
+                super::Command {
+                    name: "abc",
+                    pipe: false,
+                    background: false,
+                    parameters: vec![]
+                }
+            ))
+        );
 
         assert_eq!(
-            super::parse_background_command("abc x y \"n m\" 's t'&"),
+            super::parse_command("abc x y \"n m\" 's t'&"),
             Ok((
                 "",
                 super::Command {
