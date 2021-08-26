@@ -97,15 +97,16 @@ mod tests {
     }
 
     #[test]
-    fn test_handle_signal() {
-        let mut x = 0;
-        extern "C" fn handler(sig: c_int, info: *mut siginfo_t, _gdata: *mut c_void) {
-            unsafe { write_volatile(&mut (*is_handler_called.lock().unwrap()), true) };
+    fn test_handle_signal() -> Result<(), Box<dyn std::error::Error>> {
+        extern "C" fn handler(sig: c_int, _info: *mut siginfo_t, _gdata: *mut c_void) {
+            if sig == libc::SIGUSR1 {
+                unsafe { write_volatile(&mut (*is_handler_called.lock().unwrap()), true) };
+            }
         }
 
-        super::install_sighandler(libc::SIGUSR1, handler);
+        super::install_sighandler(libc::SIGUSR1, handler)?;
 
-        let mut sigset = unsafe {
+        let sigset = unsafe {
             let mut sigset = MaybeUninit::uninit();
             libc::sigemptyset(sigset.as_mut_ptr());
             libc::sigaddset(sigset.as_mut_ptr(), libc::SIGUSR1);
@@ -132,5 +133,7 @@ mod tests {
         unsafe { libc::sigsuspend(&old_sigset) };
 
         assert!(unsafe { read_volatile(&(*is_handler_called.lock().unwrap())) });
+
+        Ok(())
     }
 }
