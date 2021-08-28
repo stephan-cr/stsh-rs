@@ -1,8 +1,9 @@
 // https://github.com/Geal/nom/blob/master/doc/choosing_a_combinator.md
+// https://github.com/bminor/bash/blob/master/parse.y
 
 use nom::{
     branch::alt,
-    bytes::complete::take_while1,
+    bytes::complete::{escaped, take_while1},
     character::complete::{alphanumeric1, char, space0, space1},
     combinator::opt,
     multi::separated_list0,
@@ -22,10 +23,12 @@ pub(crate) fn parse(input: &str) -> IResult<&str, Vec<Command>> {
     // let pipe = char('|');
     // let input_redirect = char('<');
     // let output_redirect = char('>');
-    // let error_redirect = tag("2>");
-    // let background = char('&');
+    // let output_append = tag(">>");
+    // let error_redirect = tag("2>"); => it should be [n]>, where n can be any file descriptor, I guess
     // let sep = char(';');
-    // let escape = char('\\');
+    // let and = tag("&&");
+    // let or = tag("||");
+    // let subshell = delimited(char('('), ..., char(')'));
 
     let (i, command) = parse_command(input)?;
 
@@ -45,13 +48,16 @@ fn parse_command(input: &str) -> IResult<&str, Command> {
         delimited(&double_quote, &param_within_quotes, &double_quote),
         delimited(&single_quote, &param_within_quotes, &single_quote),
     ));
+    let background = char('&');
 
-    let (i, _) = space0(input)?; // ignore all leading space
-    let (i, command_name) = alphanumeric1(i)?;
+    let (i, _) = space0(input)?; // ignore all leading whitespace
+    let (i, command_name) = escaped(alphanumeric1, '\\', &double_quote)(i)?;
+    todo!("allow / in command names");
     let (i, _) = space0(i)?;
     let (i, parameters) = separated_list0(space1, alt((quoted_param, unquoted_param)))(i)?;
     let (i, _) = space0(i)?;
-    let (i, background) = opt(char('&'))(i)?;
+    let (i, background) = opt(background)(i)?;
+    let (i, _) = space0(i)?; // ignore all trailing whitespace
 
     Ok((
         i,
@@ -135,6 +141,36 @@ mod tests {
                     pipe: false,
                     background: true,
                     parameters: vec!["x", "y", "n m", "s t"]
+                }
+            ))
+        );
+
+        // leading a trailing whitespace
+        assert_eq!(
+            super::parse_command("\tabc x y &   "),
+            Ok((
+                "",
+                super::Command {
+                    name: "abc",
+                    pipe: false,
+                    background: true,
+                    parameters: vec!["x", "y"]
+                }
+            ))
+        );
+    }
+
+    #[test]
+    fn test_parse_quoted_double_quote() {
+        assert_eq!(
+            super::parse_command("a\\\"bc \"x y\""),
+            Ok((
+                "",
+                super::Command {
+                    name: "a\\\"bc",
+                    pipe: false,
+                    background: false,
+                    parameters: vec!["x y"]
                 }
             ))
         );
