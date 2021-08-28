@@ -12,7 +12,7 @@ use nom::{
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct Command<'a> {
-    name: &'a str,
+    pub name: &'a str,
     pipe: bool,
     background: bool,
     parameters: Vec<&'a str>,
