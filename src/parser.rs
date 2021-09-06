@@ -5,7 +5,7 @@ use nom::{
     branch::alt,
     bytes::complete::{escaped, take_while1},
     character::complete::{alphanumeric1, char, space0, space1},
-    combinator::opt,
+    combinator::{all_consuming, opt},
     multi::separated_list0,
     sequence::delimited,
     IResult,
@@ -30,7 +30,7 @@ pub(crate) fn parse(input: &str) -> IResult<&str, Vec<Command>> {
     // let or = tag("||");
     // let subshell = delimited(char('('), ..., char(')'));
 
-    let (i, command) = parse_command(input)?;
+    let (i, command) = all_consuming(parse_command)(input)?;
 
     Ok((i, vec![command]))
 }
