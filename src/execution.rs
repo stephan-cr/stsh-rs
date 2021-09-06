@@ -1,4 +1,3 @@
-use libc::{execvp, strerror};
 use std::error::Error;
 use std::ffi::{CStr, CString};
 use std::fmt::{self, Display, Formatter};
@@ -7,8 +6,8 @@ use std::ptr::{null, null_mut};
 use crate::parser::Command;
 
 use libc::{
-    __errno_location, c_int, close, dup2, fork, getpgid, getpgrp, pid_t, pipe, waitpid,
-    STDOUT_FILENO, WNOHANG,
+    __errno_location, c_char, c_int, close, dup2, execvp, fork, getpgid, getpgrp, pid_t, pipe,
+    strerror, waitpid, STDOUT_FILENO, WNOHANG,
 };
 
 fn wait_foreground(pid: pid_t) {
@@ -43,7 +42,7 @@ impl Display for ExecutionError {
 impl Error for ExecutionError {}
 
 pub(crate) fn execute(cmds: &[Command], background: bool) -> Result<(), ExecutionError> {
-    if cmds.len() < 1 {
+    if cmds.is_empty() {
         return Err(ExecutionError::Precondition);
     }
 
@@ -69,7 +68,15 @@ pub(crate) fn execute(cmds: &[Command], background: bool) -> Result<(), Executio
                 }
             } else {
                 let name = CString::new(cmd.name).unwrap();
-                unsafe { execvp(name.as_ptr(), null()) };
+                let parameters: Vec<CString> = cmd
+                    .parameters
+                    .iter()
+                    .map(|x| CString::new(*x).unwrap())
+                    .collect();
+                let mut argv: Vec<*const c_char> = parameters.iter().map(|x| x.as_ptr()).collect();
+                argv.insert(0, name.as_ptr());
+                argv.push(null());
+                unsafe { execvp(name.as_ptr(), argv.as_ptr()) };
                 Ok(())
             };
 

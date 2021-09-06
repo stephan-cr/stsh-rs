@@ -6,6 +6,7 @@ use rustyline::error::ReadlineError;
 use rustyline::Editor;
 use std::error::Error;
 
+use crate::execution::execute;
 use crate::sig::{handler, install_sighandler, mask_sigchld, unmask_sigchld};
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -21,8 +22,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         let readline = rl.readline(">> ");
         match readline {
             Ok(line) => {
-                parser::parse(&line);
-            },
+                rl.add_history_entry(&line);
+                match parser::parse(&line) {
+                    Ok((_, cmds)) => {
+                        execute(&cmds, false);
+                    }
+                    Err(e) => eprintln!("{:?}", e),
+                };
+            }
             Err(ReadlineError::Eof) => {
                 break;
             }

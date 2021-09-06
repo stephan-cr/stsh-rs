@@ -16,7 +16,7 @@ pub(crate) struct Command<'a> {
     pub name: &'a str,
     pipe: bool,
     background: bool,
-    parameters: Vec<&'a str>,
+    pub parameters: Vec<&'a str>,
 }
 
 pub(crate) fn parse(input: &str) -> IResult<&str, Vec<Command>> {
