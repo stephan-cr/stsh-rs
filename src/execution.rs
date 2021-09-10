@@ -6,8 +6,9 @@ use std::ptr::{null, null_mut};
 use crate::parser::Command;
 
 use libc::{
-    __errno_location, c_char, c_int, close, dup2, execvp, fork, getpgid, getpgrp, pid_t, pipe,
-    strerror, waitpid, STDOUT_FILENO, WNOHANG,
+    __errno_location, c_char, c_int, close, dup2, execvp, fork, getpgid, getpgrp, open, pid_t,
+    pipe, strerror, waitpid, O_CREAT, O_RDONLY, O_TRUNC, O_WRONLY, STDOUT_FILENO, S_IRUSR, S_IWUSR,
+    WNOHANG,
 };
 
 fn wait_foreground(pid: pid_t) {
@@ -52,38 +53,63 @@ pub(crate) fn execute(cmds: &[Command], background: bool) -> Result<(), Executio
     let mut in_fd: c_int = -1;
     let mut out_fd: c_int = -1;
 
+    if let Some(filename) = cmd.input_file {
+        let filename = CString::new(filename).unwrap();
+        in_fd = unsafe { open(filename.as_ptr(), O_RDONLY) };
+    }
+
+    if let Some(filename) = cmd.output_file {
+        let filename = CString::new(filename).unwrap();
+        out_fd = unsafe {
+            open(
+                filename.as_ptr(),
+                O_CREAT | O_WRONLY | O_TRUNC,
+                S_IRUSR | S_IWUSR,
+            )
+        };
+    }
+
     unsafe { pipe(filedes.as_mut_ptr()) };
 
     let pid = unsafe { fork() };
     match pid {
         -1 => Err(ExecutionError::Syscall(unsafe { *__errno_location() })),
         0 => {
-            let result = if out_fd != -1 {
+            // child process
+            if out_fd != -1 {
                 match unsafe { dup2(out_fd, STDOUT_FILENO) } {
                     -1 => Err(ExecutionError::Syscall(unsafe { *__errno_location() })),
                     _ => match unsafe { close(out_fd) } {
                         -1 => Err(ExecutionError::Syscall(unsafe { *__errno_location() })),
                         _ => Ok(()),
                     },
-                }
-            } else {
-                let name = CString::new(cmd.name).unwrap();
-                let parameters: Vec<CString> = cmd
-                    .parameters
-                    .iter()
-                    .map(|x| CString::new(*x).unwrap())
-                    .collect();
-                let mut argv: Vec<*const c_char> = parameters.iter().map(|x| x.as_ptr()).collect();
-                argv.insert(0, name.as_ptr());
-                argv.push(null());
-                unsafe { execvp(name.as_ptr(), argv.as_ptr()) };
-                Ok(())
-            };
+                }?
+            }
 
-            result
+            let name = CString::new(cmd.name).unwrap();
+            let parameters: Vec<CString> = cmd
+                .parameters
+                .iter()
+                .map(|x| CString::new(*x).unwrap())
+                .collect();
+            let mut argv: Vec<*const c_char> = parameters.iter().map(|x| x.as_ptr()).collect();
+            argv.insert(0, name.as_ptr());
+            argv.push(null());
+            unsafe { execvp(name.as_ptr(), argv.as_ptr()) };
+            Ok(())
         }
         _ => {
+            // parent process
             wait_foreground(pid);
+
+            if out_fd != -1 {
+                unsafe { close(out_fd) };
+            }
+
+            if in_fd != -1 {
+                unsafe { close(in_fd) };
+            }
+
             Ok(())
         }
     }
