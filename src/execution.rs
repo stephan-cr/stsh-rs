@@ -50,23 +50,23 @@ pub(crate) fn execute(cmds: &[Command], background: bool) -> Result<(), Executio
     let cmd = &cmds[0];
 
     let mut filedes: [c_int; 2] = [-1, -1];
-    let mut in_fd: c_int = -1;
-    let mut out_fd: c_int = -1;
+    let mut in_fd: Option<c_int> = None;
+    let mut out_fd: Option<c_int> = None;
 
     if let Some(filename) = cmd.input_file {
         let filename = CString::new(filename).unwrap();
-        in_fd = unsafe { open(filename.as_ptr(), O_RDONLY) };
+        in_fd = Some(unsafe { open(filename.as_ptr(), O_RDONLY) });
     }
 
     if let Some(filename) = cmd.output_file {
         let filename = CString::new(filename).unwrap();
-        out_fd = unsafe {
+        out_fd = Some(unsafe {
             open(
                 filename.as_ptr(),
                 O_CREAT | O_WRONLY | O_TRUNC,
                 S_IRUSR | S_IWUSR,
             )
-        };
+        });
     }
 
     unsafe { pipe(filedes.as_mut_ptr()) };
@@ -76,37 +76,51 @@ pub(crate) fn execute(cmds: &[Command], background: bool) -> Result<(), Executio
         -1 => Err(ExecutionError::Syscall(unsafe { *__errno_location() })),
         0 => {
             // child process
-            if out_fd != -1 {
-                match unsafe { dup2(out_fd, STDOUT_FILENO) } {
-                    -1 => Err(ExecutionError::Syscall(unsafe { *__errno_location() })),
-                    _ => match unsafe { close(out_fd) } {
-                        -1 => Err(ExecutionError::Syscall(unsafe { *__errno_location() })),
-                        _ => Ok(()),
-                    },
-                }?
+            if let Some(in_fd) = in_fd {
+                if unsafe { dup2(in_fd, STDOUT_FILENO) } == -1 {
+                    return Err(ExecutionError::Syscall(unsafe { *__errno_location() }));
+                }
+
+                if unsafe { close(in_fd) } == -1 {
+                    return Err(ExecutionError::Syscall(unsafe { *__errno_location() }));
+                }
+            }
+
+            if let Some(out_fd) = out_fd {
+                if unsafe { dup2(out_fd, STDOUT_FILENO) } == -1 {
+                    return Err(ExecutionError::Syscall(unsafe { *__errno_location() }));
+                }
+
+                if unsafe { close(out_fd) } == -1 {
+                    return Err(ExecutionError::Syscall(unsafe { *__errno_location() }));
+                }
             }
 
             let name = CString::new(cmd.name).unwrap();
             let parameters: Vec<CString> = cmd
                 .parameters
                 .iter()
-                .map(|x| CString::new(*x).unwrap())
+                .map(|param| CString::new(*param).unwrap())
                 .collect();
-            let mut argv: Vec<*const c_char> = parameters.iter().map(|x| x.as_ptr()).collect();
+            let mut argv: Vec<*const c_char> =
+                parameters.iter().map(|param| param.as_ptr()).collect();
             argv.insert(0, name.as_ptr());
             argv.push(null());
-            unsafe { execvp(name.as_ptr(), argv.as_ptr()) };
-            Ok(())
+            if unsafe { execvp(name.as_ptr(), argv.as_ptr()) } == -1 {
+                return Err(ExecutionError::Syscall(unsafe { *__errno_location() }));
+            }
+
+            unreachable!("execvp");
         }
         _ => {
             // parent process
             wait_foreground(pid);
 
-            if out_fd != -1 {
+            if let Some(out_fd) = out_fd {
                 unsafe { close(out_fd) };
             }
 
-            if in_fd != -1 {
+            if let Some(in_fd) = in_fd {
                 unsafe { close(in_fd) };
             }
 
