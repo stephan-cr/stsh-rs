@@ -1,23 +1,16 @@
 use std::error::Error;
 use std::ffi::{CStr, CString};
 use std::fmt::{self, Display, Formatter};
+use std::process::exit;
 use std::ptr::{null, null_mut};
 
 use crate::parser::Command;
 
 use libc::{
-    __errno_location, c_char, c_int, close, dup2, execvp, fork, getpgid, getpgrp, open, pid_t,
-    pipe, strerror, waitpid, O_CREAT, O_RDONLY, O_TRUNC, O_WRONLY, STDOUT_FILENO, S_IRUSR, S_IWUSR,
-    WNOHANG,
+    __errno_location, c_char, c_int, close, dup2, execvp, fork, getpgid, getpgrp, getpid, open,
+    pid_t, pipe, setpgid, strerror, waitpid, O_CREAT, O_RDONLY, O_TRUNC, O_WRONLY, STDOUT_FILENO,
+    S_IRUSR, S_IWUSR, WNOHANG,
 };
-
-fn wait_foreground(pid: pid_t) {
-    if unsafe { waitpid(pid, null_mut(), 0) } == -1 {
-        panic!("waitpid last foreground process failed");
-    }
-
-    unsafe { waitpid(-getpgrp(), null_mut(), WNOHANG) };
-}
 
 #[derive(Debug)]
 pub enum ExecutionError {
@@ -42,6 +35,17 @@ impl Display for ExecutionError {
 
 impl Error for ExecutionError {}
 
+fn wait_foreground(pid: pid_t) -> Result<(), ExecutionError> {
+    if unsafe { waitpid(pid, null_mut(), 0) } == -1 {
+        // panic!("waitpid last foreground process failed");
+        return Err(ExecutionError::Syscall(unsafe { *__errno_location() }));
+    }
+
+    unsafe { waitpid(-getpgrp(), null_mut(), WNOHANG) };
+
+    Ok(())
+}
+
 pub(crate) fn execute(cmds: &[Command], background: bool) -> Result<(), ExecutionError> {
     if cmds.is_empty() {
         return Err(ExecutionError::Precondition);
@@ -52,6 +56,7 @@ pub(crate) fn execute(cmds: &[Command], background: bool) -> Result<(), Executio
     let mut filedes: [c_int; 2] = [-1, -1];
     let mut in_fd: Option<c_int> = None;
     let mut out_fd: Option<c_int> = None;
+    let mut pgid = 0;
 
     if let Some(filename) = cmd.input_file {
         let filename = CString::new(filename).unwrap();
@@ -96,6 +101,18 @@ pub(crate) fn execute(cmds: &[Command], background: bool) -> Result<(), Executio
                 }
             }
 
+            if cmd.background {
+                if pgid == 0 {
+                    if unsafe { setpgid(getpid(), 0) } == -1 {
+                        return Err(ExecutionError::Syscall(unsafe { *__errno_location() }));
+                    }
+                } else {
+                    if unsafe { setpgid(getpid(), pgid) } == -1 {
+                        return Err(ExecutionError::Syscall(unsafe { *__errno_location() }));
+                    }
+                }
+            }
+
             let name = CString::new(cmd.name).unwrap();
             let parameters: Vec<CString> = cmd
                 .parameters
@@ -107,21 +124,31 @@ pub(crate) fn execute(cmds: &[Command], background: bool) -> Result<(), Executio
             argv.insert(0, name.as_ptr());
             argv.push(null());
             if unsafe { execvp(name.as_ptr(), argv.as_ptr()) } == -1 {
-                return Err(ExecutionError::Syscall(unsafe { *__errno_location() }));
+                exit(unsafe { *__errno_location() });
             }
 
             unreachable!("execvp");
         }
         _ => {
             // parent process
-            wait_foreground(pid);
+            if cmd.background {
+                if pgid == 0 {
+                    pgid = pid;
+                }
+            } else {
+                wait_foreground(pid)?;
+            }
 
             if let Some(out_fd) = out_fd {
-                unsafe { close(out_fd) };
+                if unsafe { close(out_fd) } == -1 {
+                    return Err(ExecutionError::Syscall(unsafe { *__errno_location() }));
+                }
             }
 
             if let Some(in_fd) = in_fd {
-                unsafe { close(in_fd) };
+                if unsafe { close(in_fd) } == -1 {
+                    return Err(ExecutionError::Syscall(unsafe { *__errno_location() }));
+                }
             }
 
             Ok(())
@@ -133,6 +160,7 @@ pub(crate) fn catch_background_process(pid: pid_t) {
     let child_pgid = unsafe { getpgid(pid) };
     if (unsafe { getpgrp() } != child_pgid) && (child_pgid != -1) {
         unsafe { waitpid(pid, null_mut(), WNOHANG) };
-        todo!("how to propagate error of waitpid?");
     }
+
+    // we have no way to propagate errors
 }

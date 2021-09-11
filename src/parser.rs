@@ -15,7 +15,7 @@ use nom::{
 pub(crate) struct Command<'a> {
     pub name: &'a str,
     pipe: bool,
-    background: bool,
+    pub background: bool,
     pub input_file: Option<&'a str>,
     pub output_file: Option<&'a str>,
     pub parameters: Vec<&'a str>,
