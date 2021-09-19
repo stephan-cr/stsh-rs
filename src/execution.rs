@@ -70,7 +70,13 @@ pub(crate) fn execute(cmds: &[Command], background: bool) -> Result<(), Executio
         out_fd = Some(unsafe {
             open(
                 filename.as_ptr(),
-                O_CREAT | O_WRONLY | (if output_redirect.append { 0 } else { O_TRUNC }),
+                O_CREAT
+                    | O_WRONLY
+                    | (if output_redirect.append {
+                        O_APPEND
+                    } else {
+                        O_TRUNC
+                    }),
                 S_IRUSR | S_IWUSR,
             )
         });
