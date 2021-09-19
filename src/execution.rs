@@ -1,3 +1,5 @@
+//! Execute commands
+
 use std::error::Error;
 use std::ffi::{CStr, CString};
 use std::fmt::{self, Display, Formatter};
@@ -63,12 +65,12 @@ pub(crate) fn execute(cmds: &[Command], background: bool) -> Result<(), Executio
         in_fd = Some(unsafe { open(filename.as_ptr(), O_RDONLY) });
     }
 
-    if let Some(filename) = cmd.output_file {
-        let filename = CString::new(filename).unwrap();
+    if let Some(ref output_redirect) = cmd.output_file {
+        let filename = CString::new(output_redirect.filename).unwrap();
         out_fd = Some(unsafe {
             open(
                 filename.as_ptr(),
-                O_CREAT | O_WRONLY | O_TRUNC,
+                O_CREAT | O_WRONLY | (if output_redirect.append { 0 } else { O_TRUNC }),
                 S_IRUSR | S_IWUSR,
             )
         });

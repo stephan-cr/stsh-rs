@@ -3,7 +3,7 @@
 
 use nom::{
     branch::alt,
-    bytes::complete::{escaped, take_while1},
+    bytes::complete::{escaped, tag, take_while1},
     character::complete::{alphanumeric1, char, space0, space1},
     combinator::{all_consuming, cond, opt},
     multi::separated_list0,
@@ -12,19 +12,24 @@ use nom::{
 };
 
 #[derive(Debug, PartialEq)]
+pub(crate) struct OutputRedirect<'a> {
+    pub filename: &'a str,
+    pub append: bool,
+    pub file_descriptor: u8,
+}
+
+#[derive(Debug, PartialEq)]
 pub(crate) struct Command<'a> {
     pub name: &'a str,
     pipe: bool,
     pub background: bool,
     pub input_file: Option<&'a str>,
-    pub output_file: Option<&'a str>,
+    pub output_file: Option<OutputRedirect<'a>>,
     pub parameters: Vec<&'a str>,
 }
 
 pub(crate) fn parse(input: &str) -> IResult<&str, Vec<Command>> {
     // let pipe = char('|');
-    // let output_append = tag(">>");
-    // let error_redirect = tag("2>"); => it should be [n]>, where n can be any file descriptor, I guess
     // let sep = char(';');
     // let and = tag("&&");
     // let or = tag("||");
@@ -46,7 +51,9 @@ fn parse_command(input: &str) -> IResult<&str, Command> {
     let double_quote = char('"');
     let background = char('&');
     let input_redirect = char('<');
-    let output_redirect = char('>');
+    let output_redirect = tag(">");
+    let output_redirect_append = tag(">>");
+    let error_redirect = tag("2>"); // => it should be [n]>, where n can be any file descriptor, I guess
 
     // wait for https://github.com/Geal/nom/issues/1383
     // let unquoted_param = escaped(alphanumeric1, '\\', &double_quote);
@@ -68,7 +75,17 @@ fn parse_command(input: &str) -> IResult<&str, Command> {
     let (i, _) = space0(i)?;
     let (i, input_file) = cond(has_input_redirect.is_some(), alphanumeric1)(i)?;
     let (i, _) = space0(i)?;
-    let (i, has_output_redirect) = opt(output_redirect)(i)?;
+    let (i, has_output_redirect) = opt(alt((
+        error_redirect,
+        output_redirect_append,
+        output_redirect,
+    )))(i)?;
+    let is_output_direct_append = has_output_redirect == Some(">>");
+    let output_file_descriptor = if has_output_redirect == Some("2>") {
+        2
+    } else {
+        1
+    };
     let (i, _) = space0(i)?;
     let (i, output_file) = cond(has_output_redirect.is_some(), alphanumeric1)(i)?;
     let (i, _) = space0(i)?;
@@ -82,7 +99,11 @@ fn parse_command(input: &str) -> IResult<&str, Command> {
             pipe: false,
             background: background.is_some(),
             input_file: input_file,
-            output_file: output_file,
+            output_file: output_file.map(|file| OutputRedirect {
+                filename: file,
+                append: is_output_direct_append,
+                file_descriptor: output_file_descriptor,
+            }),
             parameters: parameters,
         },
     ))
@@ -216,7 +237,30 @@ mod tests {
                     pipe: false,
                     background: false,
                     input_file: None,
-                    output_file: Some("output"),
+                    output_file: Some(super::OutputRedirect {
+                        filename: "output",
+                        append: false,
+                        file_descriptor: 1
+                    }),
+                    parameters: vec![]
+                }
+            ))
+        );
+
+        assert_eq!(
+            super::parse_command("abc >> output"),
+            Ok((
+                "",
+                super::Command {
+                    name: "abc",
+                    pipe: false,
+                    background: false,
+                    input_file: None,
+                    output_file: Some(super::OutputRedirect {
+                        filename: "output",
+                        append: true,
+                        file_descriptor: 1
+                    }),
                     parameters: vec![]
                 }
             ))
@@ -231,7 +275,11 @@ mod tests {
                     pipe: false,
                     background: true,
                     input_file: None,
-                    output_file: Some("output"),
+                    output_file: Some(super::OutputRedirect {
+                        filename: "output",
+                        append: false,
+                        file_descriptor: 1
+                    }),
                     parameters: vec![]
                 }
             ))
@@ -246,7 +294,11 @@ mod tests {
                     pipe: false,
                     background: false,
                     input_file: Some("input"),
-                    output_file: Some("output"),
+                    output_file: Some(super::OutputRedirect {
+                        filename: "output",
+                        append: false,
+                        file_descriptor: 1
+                    }),
                     parameters: vec![]
                 }
             ))
