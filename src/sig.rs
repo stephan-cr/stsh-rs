@@ -41,10 +41,12 @@ pub(crate) extern "C" fn handler(sig: c_int, info: *mut siginfo_t, _gdata: *mut 
 }
 
 pub(crate) fn mask_sigchld() -> Result<sigset_t, SigError> {
-    let mut chld_set = unsafe { MaybeUninit::<sigset_t>::zeroed().assume_init() };
-
-    unsafe { sigemptyset(&mut chld_set as *mut _) };
-    unsafe { sigaddset(&mut chld_set as *mut _, libc::SIGCHLD) };
+    let chld_set = unsafe {
+        let mut chld_set = MaybeUninit::<sigset_t>::uninit();
+        sigemptyset(chld_set.as_mut_ptr());
+        sigaddset(chld_set.as_mut_ptr(), libc::SIGCHLD);
+        chld_set.assume_init()
+    };
 
     match unsafe { sigprocmask(libc::SIG_BLOCK, &chld_set as *const _, null_mut()) } {
         -1 => Err(SigError::Syscall(unsafe { *__errno_location() })),
@@ -122,8 +124,8 @@ mod tests {
             old_sigset.assume_init()
         };
 
-        // raise the signal, but it has no effect, since it's block,
-        // see comment before.
+        // raise the signal, but it has no effect yet, since it's
+        // blocked, see comment before.
         unsafe {
             libc::raise(libc::SIGUSR1);
         }
