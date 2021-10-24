@@ -4,12 +4,18 @@
 use nom::{
     branch::alt,
     bytes::complete::{escaped, tag, take_while1},
-    character::complete::{alphanumeric1, char, space0, space1},
-    combinator::{all_consuming, cond, opt},
+    character::complete::{alphanumeric1, char, satisfy, space0, space1},
+    combinator::{all_consuming, cond, opt, verify},
     multi::separated_list0,
     sequence::delimited,
-    IResult,
+    IResult, InputLength,
 };
+
+#[derive(Debug, PartialEq)]
+pub(crate) struct InputRedirect<'a> {
+    pub filename: &'a str,
+    pub file_descriptor: u8,
+}
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct OutputRedirect<'a> {
@@ -23,7 +29,7 @@ pub(crate) struct Command<'a> {
     pub name: &'a str,
     pipe: bool,
     pub background: bool,
-    pub input_file: Option<&'a str>,
+    pub input_file: Option<InputRedirect<'a>>,
     pub output_file: Option<OutputRedirect<'a>>,
     pub parameters: Vec<&'a str>,
 }
@@ -55,9 +61,13 @@ fn parse_command(input: &str) -> IResult<&str, Command> {
     let output_redirect_append = tag(">>");
     let error_redirect = tag("2>"); // => it should be [n]>, where n can be any file descriptor, I guess
 
-    // wait for https://github.com/Geal/nom/issues/1383
-    // let unquoted_param = escaped(alphanumeric1, '\\', &double_quote);
-    let unquoted_param = alphanumeric1;
+    let mut command = verify(escaped(alphanumeric1, '\\', &double_quote), |s: &str| {
+        s.input_len() > 0
+    });
+
+    let unquoted_param = verify(escaped(alphanumeric1, '\\', &double_quote), |s: &str| {
+        s.input_len() > 0
+    });
 
     let param_within_quotes = take_while1(is_allowed_in_double_quotes);
     let quoted_param = alt((
@@ -66,7 +76,7 @@ fn parse_command(input: &str) -> IResult<&str, Command> {
     ));
 
     let (i, _) = space0(input)?; // ignore all leading whitespace
-    let (i, command_name) = escaped(alphanumeric1, '\\', &double_quote)(i)?;
+    let (i, command_name) = command(i)?;
     // todo!("allow / in command names");
     let (i, _) = space0(i)?;
     let (i, parameters) = separated_list0(space1, alt((quoted_param, unquoted_param)))(i)?;
@@ -80,12 +90,6 @@ fn parse_command(input: &str) -> IResult<&str, Command> {
         output_redirect_append,
         output_redirect,
     )))(i)?;
-    let is_output_direct_append = has_output_redirect == Some(">>");
-    let output_file_descriptor = if has_output_redirect == Some("2>") {
-        2
-    } else {
-        1
-    };
     let (i, _) = space0(i)?;
     let (i, output_file) = cond(has_output_redirect.is_some(), alphanumeric1)(i)?;
     let (i, _) = space0(i)?;
@@ -98,11 +102,18 @@ fn parse_command(input: &str) -> IResult<&str, Command> {
             name: command_name,
             pipe: false,
             background: background.is_some(),
-            input_file: input_file,
+            input_file: input_file.map(|file| InputRedirect {
+                filename: file,
+                file_descriptor: 0,
+            }),
             output_file: output_file.map(|file| OutputRedirect {
                 filename: file,
-                append: is_output_direct_append,
-                file_descriptor: output_file_descriptor,
+                append: has_output_redirect == Some(">>"),
+                file_descriptor: if has_output_redirect == Some("2>") {
+                    2
+                } else {
+                    1
+                },
             }),
             parameters: parameters,
         },
@@ -221,7 +232,10 @@ mod tests {
                     name: "abc",
                     pipe: false,
                     background: false,
-                    input_file: Some("input"),
+                    input_file: Some(super::InputRedirect {
+                        filename: "input",
+                        file_descriptor: 0
+                    }),
                     output_file: None,
                     parameters: vec![]
                 }
@@ -267,6 +281,25 @@ mod tests {
         );
 
         assert_eq!(
+            super::parse_command("abc 2> erroroutput"),
+            Ok((
+                "",
+                super::Command {
+                    name: "abc",
+                    pipe: false,
+                    background: false,
+                    input_file: None,
+                    output_file: Some(super::OutputRedirect {
+                        filename: "erroroutput",
+                        append: false,
+                        file_descriptor: 2
+                    }),
+                    parameters: vec![]
+                }
+            ))
+        );
+
+        assert_eq!(
             super::parse_command("abc > output &"),
             Ok((
                 "",
@@ -293,7 +326,10 @@ mod tests {
                     name: "abc",
                     pipe: false,
                     background: false,
-                    input_file: Some("input"),
+                    input_file: Some(super::InputRedirect {
+                        filename: "input",
+                        file_descriptor: 0
+                    }),
                     output_file: Some(super::OutputRedirect {
                         filename: "output",
                         append: false,
@@ -306,7 +342,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "wait for https://github.com/Geal/nom/issues/1383"]
     fn test_parse_quoted_double_quote() {
         assert_eq!(
             super::parse_command("a\\\"bc \"x y\""),
@@ -337,30 +372,5 @@ mod tests {
                 }
             ))
         );
-    }
-
-    #[test]
-    #[ignore = "wait for https://github.com/Geal/nom/issues/1383"]
-    fn test_foo() {
-        let double_quote = nom::character::complete::char::<&str, nom::error::Error<&str>>('"');
-        let res = nom::bytes::complete::escaped(
-            nom::character::complete::alphanumeric1,
-            '\\',
-            &double_quote,
-        )("aaa\\\"");
-
-        eprintln!("XXX {:?}", res);
-
-        let res: Result<(&str, &str), nom::Err<nom::error::Error<&str>>> =
-            nom::bytes::complete::escaped(
-                nom::character::complete::digit1,
-                '\\',
-                nom::character::complete::one_of(r#""n\"#),
-            )("");
-        eprintln!("XXX {:?}", res);
-
-        let res: Result<(&str, &str), nom::Err<nom::error::Error<&str>>> =
-            nom::character::complete::digit1("");
-        eprintln!("XXX {:?}", res);
     }
 }
