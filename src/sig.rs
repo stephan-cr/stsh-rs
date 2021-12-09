@@ -61,6 +61,12 @@ pub(crate) fn unmask_sigchld(chld_set: sigset_t) -> Result<(), SigError> {
     }
 }
 
+/// Install a signal handler.
+///
+/// Registers a signal handler given by `handler` for a signal number
+/// given by `signum`. The signal handler must only call
+/// async-signal-safe functions, (see man 7 signal-safety), because it
+/// is called from a signal handler.
 pub(crate) fn install_sighandler(
     signum: c_int,
     handler: extern "C" fn(c_int, *mut siginfo_t, *mut c_void),

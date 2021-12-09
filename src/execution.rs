@@ -165,6 +165,10 @@ pub(crate) fn execute(cmds: &[Command], background: bool) -> Result<(), Executio
 }
 
 pub(crate) fn catch_background_process(pid: pid_t) {
+    // Because this function is called from a signal handler, all
+    // functions called here need to be and are "async-signal-safe",
+    // see "man 7 signal-safety"
+
     let child_pgid = unsafe { getpgid(pid) };
     if (unsafe { getpgrp() } != child_pgid) && (child_pgid != -1) {
         unsafe { waitpid(pid, null_mut(), WNOHANG) };
