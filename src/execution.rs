@@ -22,13 +22,13 @@ pub enum ExecutionError {
 
 impl Display for ExecutionError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match &*self {
+        match self {
             ExecutionError::Syscall(error_num) => write!(
                 f,
                 "{}",
                 unsafe { CStr::from_ptr(strerror(*error_num)) }
                     .to_string_lossy()
-                    .to_owned()
+                    .into_owned()
             ),
             ExecutionError::Precondition => write!(f, "precondition not fulfilled"),
         }
@@ -48,7 +48,7 @@ fn wait_foreground(pid: pid_t) -> Result<(), ExecutionError> {
     Ok(())
 }
 
-pub(crate) fn execute(cmds: &[Command], background: bool) -> Result<(), ExecutionError> {
+pub(crate) fn execute(cmds: &[Command], _background: bool) -> Result<(), ExecutionError> {
     if cmds.is_empty() {
         return Err(ExecutionError::Precondition);
     }
@@ -114,10 +114,8 @@ pub(crate) fn execute(cmds: &[Command], background: bool) -> Result<(), Executio
                     if unsafe { setpgid(getpid(), 0) } == -1 {
                         return Err(ExecutionError::Syscall(unsafe { *__errno_location() }));
                     }
-                } else {
-                    if unsafe { setpgid(getpid(), pgid) } == -1 {
-                        return Err(ExecutionError::Syscall(unsafe { *__errno_location() }));
-                    }
+                } else if unsafe { setpgid(getpid(), pgid) } == -1 {
+                    return Err(ExecutionError::Syscall(unsafe { *__errno_location() }));
                 }
             }
 

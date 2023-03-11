@@ -62,11 +62,11 @@ fn parse_command(input: &str) -> IResult<&str, Command> {
     let error_redirect = tag("2>"); // => it should be [n]>, where n can be any file descriptor, I guess
 
     let mut command = verify(escaped(alphanumeric1, '\\', &double_quote), |s: &str| {
-        s.input_len() > 0
+        !s.is_empty()
     });
 
     let unquoted_param = verify(escaped(alphanumeric1, '\\', &double_quote), |s: &str| {
-        s.input_len() > 0
+        !s.is_empty()
     });
 
     let param_within_quotes = take_while1(is_allowed_in_double_quotes);

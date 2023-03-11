@@ -20,13 +20,13 @@ pub enum SigError {
 
 impl fmt::Display for SigError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &*self {
+        match self {
             SigError::Syscall(error_num) => write!(
                 f,
                 "{}",
                 unsafe { CStr::from_ptr(strerror(*error_num)) }
                     .to_string_lossy()
-                    .to_owned()
+                    .into_owned()
             ),
         }
     }
@@ -36,7 +36,7 @@ impl Error for SigError {}
 
 pub(crate) extern "C" fn handler(sig: c_int, info: *mut siginfo_t, _gdata: *mut c_void) {
     if sig == libc::SIGCHLD {
-        catch_background_process(unsafe { (&*info).si_pid() });
+        catch_background_process(unsafe { (*info).si_pid() });
     }
 }
 
